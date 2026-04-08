@@ -1,0 +1,2 @@
+{"sessionId": "edd075", "hypothesisId": "C", "runId": "pre-fix", "location": "1.py:__main__", "message": "entry", "data": {"ReverseShell_is_Enhanced": true}, "timestamp": 1775606482405}
+{"sessionId": "edd075", "hypothesisId": "D", "runId": "pre-fix", "location": "1.py:connect", "message": "connect attempt", "data": {"host": "127.0.0.1", "port": 4444}, "timestamp": 1775606482405}
